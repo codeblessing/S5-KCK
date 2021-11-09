@@ -1,0 +1,4 @@
+wheel
+--only-binary numpy
+--only-binary scipy
+scikit-image >= 0.18
