@@ -4,7 +4,7 @@ pub mod filters;
 use std::path::Path;
 
 use image::io::Reader;
-use image::GrayImage;
+use image::{GrayImage, Rgb};
 // use ndarray::prelude::*;
 use pyo3::{exceptions, prelude::*};
 
@@ -18,6 +18,7 @@ use crate::error::ScoreError;
 #[pymodule]
 fn score(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(binarize, m)?)?;
+    m.add_function(wrap_pyfunction!(detect_lines, m)?)?;
     Ok(())
 }
 
@@ -33,6 +34,13 @@ fn binarize(filepath: &str) -> PyResult<()> {
     let img =
         read_image(filepath).map_err(|_| exceptions::PyIOError::new_err("Cannot open image."))?;
     let filtered = filters::binarize(img, 127);
-    filtered.save("processed/binary_00.bmp").map_err(|_| exceptions::PyIOError::new_err("Cannot save image."))?;
+    filtered.save("processed/binary_00.png").map_err(|_| exceptions::PyIOError::new_err("Cannot save image."))?;
     Ok(())
+}
+
+#[pyfunction]
+fn detect_lines(filepath: &str) -> PyResult<()> {
+    let img = image::open(filepath).map_err(|_| exceptions::PyIOError::new_err("Cannot open image."))?;
+    let modified = filters::detect_lines(&img, Rgb::<u8>([255, 0, 0]));
+    modified.save("processed/lines_00.png").map_err(|_| exceptions::PyIOError::new_err("Cannot save image."))
 }
