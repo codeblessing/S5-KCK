@@ -1,10 +1,8 @@
 mod filters;
 
-use image::{Rgb, buffer::ConvertBuffer, open};
-use imageproc::hough::{PolarLine, draw_polar_lines_mut};
+use image::{buffer::ConvertBuffer, open, Rgb};
+use imageproc::hough::{draw_polar_lines_mut, PolarLine};
 use rayon::prelude::*;
-
-use crate::filters::ExtractLines;
 
 fn main() {
     let path = std::env::args()
@@ -22,29 +20,23 @@ fn main() {
     let out = imageproc::filter::median_filter(&out, 4, 4);
 
     use imageproc::hough::draw_polar_lines;
-    let lines = filters::find_lines(&out);
-    let mut staff = lines.get_horizontal(4);
-    staff.sort_by(|x,  y| x.r.partial_cmp(&y.r).unwrap_or(std::cmp::Ordering::Less));
+    let mut staff = filters::find_staff_lines(out, 5);
+    staff.sort_by(|x, y| x.r.partial_cmp(&y.r).unwrap_or(std::cmp::Ordering::Less));
     let first: Vec<PolarLine> = staff.iter().step_by(5).cloned().collect();
     let second: Vec<PolarLine> = staff.iter().skip(1).step_by(5).cloned().collect();
     let third: Vec<PolarLine> = staff.iter().skip(2).step_by(5).cloned().collect();
     let fourth: Vec<PolarLine> = staff.iter().skip(3).step_by(5).cloned().collect();
     let fifth: Vec<PolarLine> = staff.iter().skip(4).step_by(5).cloned().collect();
 
-    let mut horizontal = draw_polar_lines(
-        &img.convert(),
-        &first,
-        Rgb::<u8>([255, 0, 0]),
-    );
+    let mut horizontal = draw_polar_lines(&img.convert(), &first, Rgb::<u8>([255, 0, 0]));
 
     draw_polar_lines_mut(&mut horizontal, &second, Rgb::<u8>([255, 255, 0]));
     draw_polar_lines_mut(&mut horizontal, &third, Rgb::<u8>([0, 255, 0]));
     draw_polar_lines_mut(&mut horizontal, &fourth, Rgb::<u8>([0, 255, 255]));
     draw_polar_lines_mut(&mut horizontal, &fifth, Rgb::<u8>([0, 0, 255]));
 
-
-    out.save("processed/output.png")
-        .expect("Cannot save image.");
+    // out.save("processed/output.png")
+    //     .expect("Cannot save image.");
     horizontal
         .save("processed/horizontal.png")
         .expect("Cannot save image.");
