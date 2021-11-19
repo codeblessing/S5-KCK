@@ -3,13 +3,13 @@ use image::GrayImage;
 use imageproc::hough;
 use rayon::prelude::*;
 
-pub fn binarize(img: &GrayImage) -> Option<GrayImage> {
+pub fn binarize(img: &GrayImage, threshold: u8) -> Option<GrayImage> {
     let mut output_buffer = vec![0u8; img.len()];
     output_buffer
         .par_iter_mut()
         .zip(img.par_iter())
         .for_each(|(out, &dec)| {
-            if dec > 127 {
+            if dec > threshold {
                 *out = 255
             }
         });
@@ -47,7 +47,7 @@ pub fn gradient_horizontal(img: &GrayImage) -> Vec<i16> {
     gradient
 }
 
-pub fn find_lines(img: &GrayImage, max_angle: u32) -> Vec<hough::PolarLine> {
+pub fn find_lines(img: &GrayImage) -> Vec<hough::PolarLine> {
     let mut img = img.clone();
     imageops::invert(&mut img);
     let options = hough::LineDetectionOptions {
@@ -143,7 +143,7 @@ mod test_filters {
         let expected_image = GrayImage::from_vec(256, 20, expected_buffer)
             .expect("Cannot create image from buffer.");
 
-        let result_image = binarize(&input_image).expect("Cannot create binarized imge.");
+        let result_image = binarize(&input_image, 127).expect("Cannot create binarized imge.");
 
         assert_eq!(result_image, expected_image);
     }
