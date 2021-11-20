@@ -1,5 +1,3 @@
-use std::ops::Div;
-
 use image::GrayImage;
 use imageproc::hough::{LineDetectionOptions, PolarLine};
 use rayon::prelude::*;
@@ -52,18 +50,19 @@ pub fn find_staff_lines(mut img: GrayImage, tolerance: u32) -> Vec<PolarLine> {
             // by manually removing elements from Vec.
             let drain_max: usize = lines
                 .iter()
-                .take_while(|line| (line.r - current.r).abs() < 5.0)
+                .take_while(|line| (line.r - current.r).abs() < 10.0)
                 .map(|_| 1)
                 .sum();
 
             let mut chunk: Vec<PolarLine> = lines.drain(..drain_max).collect();
-            let r = current.r;
-            let count = chunk.len();
-            let theta = chunk
+            let count = chunk.len() as u32;
+            let (theta, r): (Vec<_>, Vec<_>) = chunk
                 .drain(..)
-                .map(|line| line.angle_in_degrees as usize)
-                .sum::<usize>()
-                .div(count) as u32;
+                .map(|line| (line.angle_in_degrees, line.r))
+                .unzip();
+
+            let theta = theta.iter().sum::<u32>() / count;
+            let r = r.iter().sum::<f32>() / count as f32;
 
             output.push(PolarLine {
                 r,
