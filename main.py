@@ -1,14 +1,32 @@
 import cv2
 import numpy as np
+import sys
 from scipy.ndimage import interpolation as inter
+
+# ---- Helpers ---- #
 
 def saveAndShow(filename, img, path="out/"):
     cv2.imwrite(path + filename, img)
     cv2.imshow(filename, img)
     cv2.waitKey(0)
 
-def getGrayImage(filename, path="img/", size=(800, 500)):
-    img = cv2.resize(cv2.imread(path + filename), size)
+def find_score(arr, angle):
+    data = inter.rotate(arr, angle, reshape=False, order=0)
+    hist = np.sum(data, axis=1)
+    score = np.sum((hist[1:] - hist[:-1]) ** 2)
+    return score
+
+# ---- ###### ---- #
+
+def readImageFromTerminal(path, size):
+    if(len(sys.argv) != 2):
+        print("Usage: python3 main.py <filename>")
+        print("where <filename> must be in {} directory".format(path))
+        exit(0)
+    return cv2.resize(cv2.imread(path + sys.argv[1]), size)
+
+
+def makeGray(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     gray = cv2.fastNlMeansDenoising(gray,None)
     saveAndShow("gray.jpg", gray)
@@ -19,13 +37,6 @@ def binarize(img, blockSize, offset):
     thresh = cv2.bilateralFilter(thresh,9,75,75)
     saveAndShow("thresh.jpg", thresh)
     return thresh
-
-
-def find_score(arr, angle):
-    data = inter.rotate(arr, angle, reshape=False, order=0)
-    hist = np.sum(data, axis=1)
-    score = np.sum((hist[1:] - hist[:-1]) ** 2)
-    return score
 
 def deskew(bin_img):
     bin_img = np.invert(bin_img)
@@ -50,16 +61,14 @@ def detectLines(img):
     
     horizontalSize = int(img.shape[1] / 30)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (horizontalSize, 1))
-
     detected_lines = cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel, iterations=1)
 
     saveAndShow("detected.jpg", detected_lines)
-
     return detected_lines
 
-def drawLines(img, line):
+def removeLines(img, lines):
     img = cv2.bitwise_or(img, lines)
-    saveAndShow("imgLines.jpg", img)
+    saveAndShow("imgWithoutLines.jpg", img)
     return img
 
 def splitScores(img):
@@ -105,51 +114,27 @@ def splitScores(img):
 
 
 def classify(scores):
-    trainImage = cv2.cvtColor(cv2.imread("templates/flat2.jpg"), cv2.COLOR_BGR2GRAY)
-    trainImage = cv2.adaptiveThreshold(trainImage, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 51, 10)
-    trainImage = trainImage.reshape(-1, trainImage.shape[0] * trainImage.shape[1]).astype(np.float32)
-
-    train = np.array(np.split(trainImage[0], 32)).astype(np.float32)
-    train_labels = [0,0,0,0,0,1,1,1,1,1,1,2,3,3,3,3,2,3,2,2,2,5,4,4,4,4,5,4,5,5,4,5]
-
-    train_labels = [[i] for i in train_labels]
-    train_labels = np.array(train_labels).astype(np.float32)
-  
-    knn = cv2.ml.KNearest_create()
-    knn.train(train, cv2.ml.ROW_SAMPLE, train_labels)
-    classes = []
-    for test in scores:
-        test = test.reshape(-1, 600).astype(np.float32)
-        ret, result, neighbours, dist = knn.findNearest(test, k = 3)
-        classes.append(int(result))
-    print(classes)
-    return classes
+    #TODO
+    return []
 
 def drawScores(img, boxes, classes):
-    img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-    colors = [(0,0,255), (0,255,0), (255,0,0), (255, 255, 0), (0,255,255), (255,0,255)]
-    names = ["wiolin", "basowy", "1", "1/2", "1/4", "1/8"]
-    
-    # 0 - klucz wiolinowy
-    # 1 - klucz basowy
-    # 2 - cala nuta
-    # 3 - polnuta
-    # 4 - cwierc
-    # 5 - osemka
+    # classes - not used - TODO
 
-    for box, cl in zip(boxes, classes):
-        cv2.rectangle(img, (box[0], box[1]), (box[0] + box[2], box[1] + box[3]), colors[cl], 2)
-        cv2.putText(img, names[cl], (box[0], box[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), thickness=2)
+    img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    for box in boxes:
+        cv2.rectangle(img, (box[0], box[1]), (box[0] + box[2], box[1] + box[3]), (0,255,0), 2)
+        cv2.putText(img, "nuta", (box[0], box[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), thickness=2)
     saveAndShow("boxes.jpg", img)
 
     
 ######
-img = getGrayImage("template2.jpg")
-binary = binarize(img, blockSize=51, offset=10)
+img = readImageFromTerminal(path="img/", size=(800, 500))
+gray = makeGray(img)
+binary = binarize(gray, blockSize=51, offset=10)
 deskewed = deskew(binary)
 lines = detectLines(deskewed)
-imgWithLines = drawLines(deskewed, lines)
-scores, boxes = splitScores(imgWithLines)
+imgWithoutLines = removeLines(deskewed, lines)
+scores, boxes = splitScores(imgWithoutLines)
 classes = classify(scores)
-drawScores(deskew(img), boxes, classes)
+drawScores(deskew(gray), boxes, classes)
 ######
