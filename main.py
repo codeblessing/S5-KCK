@@ -10,7 +10,7 @@ def saveAndShow(filename, img, path="out/"):
     cv2.imshow(filename, img)
     cv2.waitKey(0)
 
-def find_score(arr, angle):
+def deskew_helper(arr, angle):
     data = inter.rotate(arr, angle, reshape=False, order=0)
     hist = np.sum(data, axis=1)
     score = np.sum((hist[1:] - hist[:-1]) ** 2)
@@ -38,14 +38,12 @@ def binarize(img, blockSize, offset):
     saveAndShow("thresh.jpg", thresh)
     return thresh
 
-def deskew(bin_img):
+def deskew(bin_img, delta, limit):
     bin_img = np.invert(bin_img)
-    delta = 1
-    limit = 50
     angles = np.arange(-limit, limit+delta, delta)
     scores = []
     for angle in angles:
-        score = find_score(bin_img, angle)
+        score = deskew_helper(bin_img, angle)
         scores.append(score)
     best_score = max(scores)
     best_angle = angles[scores.index(best_score)]
@@ -71,10 +69,7 @@ def removeLines(img, lines):
     saveAndShow("imgWithoutLines.jpg", img)
     return img
 
-def splitScores(img):
-    maxArea = 5000
-    minArea = 100
-
+def findBoundingRectangles(img, minArea, maxArea):
     comp = cv2.connectedComponentsWithStats(np.invert(img))
 
     labels = comp[1]
@@ -93,9 +88,7 @@ def splitScores(img):
     labelStats = comp[2]
 
     boxes = []
-    scores = []
     newImg = np.ones(img.shape).astype(np.uint8)
-    strElement = cv2.getStructuringElement(cv2.MORPH_RECT, (2,2))
 
     for compLabel in range(1,comp[0],1):
         x = labelStats[compLabel,0]
@@ -104,20 +97,17 @@ def splitScores(img):
         h = labelStats[compLabel,3]
         boxes.append([x,y,w,h])
         score = img[y:y+h, x:x+w]
-        score = cv2.morphologyEx(score, cv2.MORPH_OPEN, strElement)
-        scores.append(cv2.resize(score, (20,30)))
         newImg[y:y+h, x:x+w] = np.invert(score)
     
     saveAndShow("scores.jpg", np.invert(newImg))
-    saveAndShow("flat.jpg", cv2.hconcat(scores))
-    return scores, boxes
+    return boxes
 
 
-def classify(scores):
+def classify(boxes):
     #TODO
     return []
 
-def drawScores(img, boxes, classes):
+def drawBoundingRectangles(img, boxes, classes):
     # classes - not used - TODO
 
     img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
@@ -131,10 +121,10 @@ def drawScores(img, boxes, classes):
 img = readImageFromTerminal(path="img/", size=(800, 500))
 gray = makeGray(img)
 binary = binarize(gray, blockSize=51, offset=10)
-deskewed = deskew(binary)
+deskewed = deskew(binary, delta=1, limit=50)
 lines = detectLines(deskewed)
 imgWithoutLines = removeLines(deskewed, lines)
-scores, boxes = splitScores(imgWithoutLines)
-classes = classify(scores)
-drawScores(deskew(gray), boxes, classes)
+boxes = findBoundingRectangles(imgWithoutLines, minArea=150, maxArea=5000)
+classes = classify(boxes)
+drawBoundingRectangles(deskewed, boxes, classes)
 ######
