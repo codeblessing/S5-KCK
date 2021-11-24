@@ -1,62 +1,26 @@
-import cv2
+import cv2 as cv
 import numpy as np
 import sys
 from scipy.ndimage import interpolation as transform
-import config
-import io
-import filters
-from localio import save_and_show
-
-# ---- Helpers ---- #
+from score import config, filters, io
 
 
-def saveAndShow(filename, img, path = "out/"):
-    cv2.imwrite(path + filename, img)
-    cv2.imshow(filename, img)
-    cv2.waitKey(0)
-
-
-def deskew_helper(arr, angle):
-    data = transform.rotate(arr, angle, reshape = False, order = 0)
-    hist = np.sum(data, axis = 1)
-    score = np.sum((hist[1:] - hist[:-1])**2)
-    return score
-
-
-# ---- ###### ---- #
-
-
-def readImageFromTerminal(path, size):
+def import_image(path, size):
     if (len(sys.argv) != 2):
         print("Usage: python3 main.py <filename>")
         print("where <filename> must be in {} directory".format(path))
         exit(0)
-    return cv2.resize(cv2.imread(path + sys.argv[1]), size)
+    return cv.resize(cv.imread(path + sys.argv[1]), size)
 
 
-def makeGray(img):
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.fastNlMeansDenoising(gray, None)
-    saveAndShow("gray.jpg", gray)
-    return gray
-
-
-def binarize(img, blockSize, offset):
-    thresh = cv2.adaptiveThreshold(img, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, blockSize, offset)
-    thresh = cv2.bilateralFilter(thresh, 9, 75, 75)
-    saveAndShow("thresh.jpg", thresh)
-    return thresh
-
-
-def deskew(img):
+def straighten(img):
     # `img` must be binarized in order for this function to work properly.
     angle = filters.detect_rotation_angle(img)
-
     img = transform.rotate(img, angle, cval = 255)
 
     if config.DEBUG:
         print("Detected rotation angle:", angle)
-        save_and_show("straightened.png", img)
+        io.save_and_show("straightened.png", img)
 
     return img
 
@@ -65,21 +29,21 @@ def detectLines(img):
     img = np.invert(img)
 
     horizontalSize = int(img.shape[1] / 30)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (horizontalSize, 1))
-    detected_lines = cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel, iterations = 1)
+    kernel = cv.getStructuringElement(cv.MORPH_RECT, (horizontalSize, 1))
+    detected_lines = cv.morphologyEx(img, cv.MORPH_OPEN, kernel, iterations = 1)
 
-    saveAndShow("detected.jpg", detected_lines)
+    io.save_and_show("detected.jpg", detected_lines)
     return detected_lines
 
 
 def removeLines(img, lines):
-    img = cv2.bitwise_or(img, lines)
-    saveAndShow("imgWithoutLines.jpg", img)
+    img = cv.bitwise_or(img, lines)
+    io.save_and_show("imgWithoutLines.jpg", img)
     return img
 
 
 def findBoundingRectangles(img, minArea, maxArea):
-    comp = cv2.connectedComponentsWithStats(np.invert(img))
+    comp = cv.connectedComponentsWithStats(np.invert(img))
 
     labels = comp[1]
     labelStats = comp[2]
@@ -91,7 +55,7 @@ def findBoundingRectangles(img, minArea, maxArea):
 
     labels[labels > 0] = 1
 
-    comp = cv2.connectedComponentsWithStats(labels.astype(np.uint8))
+    comp = cv.connectedComponentsWithStats(labels.astype(np.uint8))
 
     labels = comp[1]
     labelStats = comp[2]
@@ -108,33 +72,24 @@ def findBoundingRectangles(img, minArea, maxArea):
         score = img[y:y + h, x:x + w]
         newImg[y:y + h, x:x + w] = np.invert(score)
 
-    saveAndShow("scores.jpg", np.invert(newImg))
+    io.save_and_show("scores.jpg", np.invert(newImg))
     return boxes
 
 
-def classify(boxes):
-    #TODO
-    return []
-
-
-def drawBoundingRectangles(img, boxes, classes):
-    # classes - not used - TODO
-
-    img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+def drawBoundingRectangles(img, boxes):
+    img = cv.cvtColor(img, cv.COLOR_GRAY2BGR)
     for box in boxes:
-        cv2.rectangle(img, (box[0], box[1]), (box[0] + box[2], box[1] + box[3]), (0, 255, 0), 2)
-        cv2.putText(img, "nuta", (box[0], box[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), thickness = 2)
-    saveAndShow("boxes.jpg", img)
+        cv.rectangle(img, (box[0], box[1]), (box[0] + box[2], box[1] + box[3]), (0, 255, 0), 2)
+        cv.putText(img, "nuta", (box[0], box[1]), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), thickness = 2)
+    io.save_and_show("boxes.jpg", img)
 
 
 ######
-img = readImageFromTerminal(path = "img/", size = (800, 500))
+img = import_image(path = "img/", size = (800, 500))
 gray = filters.desaturate(img)
-binary = binarize(gray, blockSize = 51, offset = 10)
-straight = deskew(binary)
-lines = detectLines(straight)
-imgWithoutLines = removeLines(straight, lines)
-boxes = findBoundingRectangles(imgWithoutLines, minArea = 150, maxArea = 5000)
-classes = classify(boxes)
-drawBoundingRectangles(straight, boxes, classes)
+binary = filters.binarize(gray, block_size = 51, offset = 10)
+straight = straighten(binary)
+erased = filters.remove_horizontal_lines(straight)
+boxes = findBoundingRectangles(erased, minArea = 150, maxArea = 5000)
+drawBoundingRectangles(erased, boxes)
 ######
