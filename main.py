@@ -1,19 +1,27 @@
-import cv2
+import cv2 as cv
 import numpy as np
 import utils
 import filters
-from classes import Note, Staff, StaffLine
+import config
+from datetime import datetime
+from classes import Note, Staff
+from pipe import select, where
+import debug
+import more_itertools as iter
+import itertools
 
 
 # Find horizontal lines (staff lines)
 def detect_horizontal_lines(img):
     img = np.invert(img)
 
-    horizontal_size = int(img.shape[1] / 30)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (horizontal_size, 1))
-    detected_lines = cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel, iterations = 1)
+    horizontal_size = img.shape[1] // 30
+    kernel = cv.getStructuringElement(cv.MORPH_RECT, (horizontal_size, 1))
+    detected_lines = cv.morphologyEx(img, cv.MORPH_OPEN, kernel, iterations = 1)
 
-    utils.save_and_show("horizontal.jpg", detected_lines)
+    if config.DEBUG:
+        utils.save_and_show("horizontal.jpg", detected_lines)
+
     return detected_lines
 
 
@@ -21,83 +29,119 @@ def detect_horizontal_lines(img):
 def detect_vertical_lines(img):
     img = np.invert(img)
 
-    vertical_size = int(img.shape[0] / 30)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, vertical_size))
-    detected_lines = cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel, iterations = 1)
+    vertical_size = img.shape[0] // 30
+    kernel = cv.getStructuringElement(cv.MORPH_RECT, (1, vertical_size))
+    detected_lines = cv.morphologyEx(img, cv.MORPH_OPEN, kernel, iterations = 1)
 
-    utils.save_and_show("vertical.jpg", detected_lines)
+    if config.DEBUG:
+        utils.save_and_show("vertical.jpg", detected_lines)
+
     return detected_lines
 
 
 # Remove horizontal lines and repair through vertical lines
 def remove_lines(img, horizontal_lines, vertical_lines):
-    img = cv2.bitwise_or(img, horizontal_lines)
+    img = cv.bitwise_or(img, horizontal_lines)
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 2))
-    img = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel)
+    kernel = cv.getStructuringElement(cv.MORPH_RECT, (1, 2))
+    img = cv.morphologyEx(img, cv.MORPH_CLOSE, kernel)
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 3))
-    img = cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel)
+    kernel = cv.getStructuringElement(cv.MORPH_RECT, (1, 3))
+    img = cv.morphologyEx(img, cv.MORPH_OPEN, kernel)
 
-    img = np.invert(cv2.bitwise_or(np.invert(img), vertical_lines))
+    img = np.invert(cv.bitwise_or(np.invert(img), vertical_lines))
 
-    utils.save_and_show("erased.jpg", img)
+    if config.DEBUG:
+        utils.save_and_show("erased.jpg", img)
+
     return img
 
 
 # Find rectangles of objects that have area between min_area and max_area
 def find_bounding_rectangles(img, min_area, max_area):
-    comp = cv2.connectedComponentsWithStats(np.invert(img))
+    count, labels, stats = cv.connectedComponentsWithStats(np.invert(img))[:3]
+    areas = stats[:, 4]
 
-    labels = comp[1]
-    label_stats = comp[2]
-    label_areas = label_stats[:, 4]
+    for label in range(1, count):
+        if areas[label] > max_area or areas[label] < min_area:
+            labels[labels == label] = 0
+    labels[labels > 0] = 255
 
-    for compLabel in range(1, comp[0], 1):
-        if label_areas[compLabel] > max_area or label_areas[compLabel] < min_area:
-            labels[labels == compLabel] = 0
+    if config.DEBUG:
+        time = datetime.now()
+        labeled = labels.astype(np.uint8)
+        utils.save_and_show(f'labeled_{time.hour}_{time.minute}_{time.second}_{time.microsecond}.png', labeled)
 
-    labels[labels > 0] = 1
+    stats = cv.connectedComponentsWithStats(labels.astype(np.uint8))[2]
 
-    comp = cv2.connectedComponentsWithStats(labels.astype(np.uint8))
-
-    labels = comp[1]
-    label_stats = comp[2]
-
-    objects = []
-
-    for comp_label in range(1, comp[0], 1):
-        x = label_stats[comp_label, 0]
-        y = label_stats[comp_label, 1]
-        w = label_stats[comp_label, 2]
-        h = label_stats[comp_label, 3]
-        objects.append([x, y, w, h])
-
-    return objects
+    return [[x, y, w, h] for x, y, w, h, *_ in stats[1:]]
 
 
-def get_staves(staff_lines, img):
-    lines = []
+def find_staff_bounds(img):
+    class Line:
+        def __init__(self, dist, theta):
+            self.dist = dist
+            self.theta = theta
+            self.y = np.round(np.sin(theta) * dist + 1000 * np.cos(theta))
+
+        def __str__(self) -> str:
+            return f"(r: {self.dist}, theta: {self.theta}, y: {self.y})"
+
+    def find_approx_staff_height(lines):
+        assert len(lines) > 2, "Error: cannot infer staff height from less than 2 lines."
+
+        gradient = [lines[i].dist - lines[i - 1].dist for i in range(1, len(lines))]
+        threshold = np.median(gradient) + np.std(gradient)
+        spaces = list(enumerate(gradient) | where(lambda val: val[1] > threshold) | select(lambda val: val[0]))
+        indices = sorted([i for i in itertools.chain(*[[i, i + 1] for i in spaces])] + [0, len(lines) - 1])
+        heights = [lines[j].dist - lines[i].dist for i, j in iter.grouper(indices, 2, indices[-1])]
+
+        return np.median(heights), indices
+
+    # Find long horizontal lines (most probable staff lines).
+    PI_HALF = np.pi / 2
+    lines = cv.HoughLines(img, 1, np.pi / 360, img.shape[1] // 5)
+    lines = list(
+        sorted([Line(line[0][0], line[0][1]) for line in lines], key = lambda line: line.dist)
+        | where(lambda line: abs(line.theta - PI_HALF) < 0.0001))
+
+    print("lines:", *lines, sep = '\n')
+    if config.DEBUG:
+        debug.__draw_hough_lines__(img, lines, "staff_lines.png")
+    height, indices = find_approx_staff_height(lines)
+
     staves = []
+    for index in indices[::2]:
+        staves.append(Staff(lines[index].y, height, index))
 
-    # Make sure that each staff consists of 5 lines
-    assert (len(lines) % 5 == 0)
-
-    # Sort lines from top to bottom
-    staff_lines.sort(key = lambda x: x[1])
-
-    # Create Staff objects
-    for index, line in zip(range(len(staff_lines)), staff_lines):
-        x, y, w, h = line
-        lines.append(StaffLine(x, y, w, h, index % 5, img[y:y + h, x:x + w]))
-        if ((index + 1) % 5 == 0):
-            staff_height = (lines[-1].y + lines[-1].height) - lines[0].y
-            staff_width = max([line.width for line in lines])
-            nparray = img[lines[0].y:lines[0].y + staff_height, lines[0].x:lines[0].x + staff_width]
-            staves.append(Staff(lines[0].x, lines[0].y, staff_width, staff_height, lines, int(index / 5), nparray))
-            lines = []
+    if config.DEBUG:
+        debug.__draw_staves__(img, staves)
 
     return staves
+
+
+# def get_staves(staff_lines, img):
+#     lines = []
+#     staves = []
+
+#     # Make sure that each staff consists of 5 lines
+#     assert (len(lines) % 5 == 0)
+
+#     # Sort lines from top to bottom
+#     staff_lines.sort(key = lambda x: x[1])
+
+#     # Create Staff objects
+#     for index, line in enumerate(staff_lines):
+#         x, y, w, h = line
+#         lines.append(StaffLine(x, y, w, h, index % 5, img[y:y + h, x:x + w]))
+#         if ((index + 1) % 5 == 0):
+#             staff_height = (lines[-1].y + lines[-1].height) - lines[0].y
+#             staff_width = max([line.width for line in lines])
+#             nparray = img[lines[0].y:lines[0].y + staff_height, lines[0].x:lines[0].x + staff_width]
+#             staves.append(Staff(lines[0].x, lines[0].y, staff_width, staff_height, lines, int(index / 5), nparray))
+#             lines = []
+
+#     return staves
 
 
 def get_notes(notes_rectangles, img):
@@ -140,7 +184,7 @@ def classify(staves, notes):
         half_width = int(note.width / 2)
 
         # "1" has the size of space between staff lines
-        if note.height < 1.5 * staves[note.staff].avg_staffline_space:
+        if note.height < 1.1 * staves[note.staff].avg_staffline_space:
             note.type = "1"
         # "1/2" has many white pixels in bottom-left corner
         elif np.count_nonzero(note.nparray[half_height:, :half_width]) / (half_height * half_width) > 0.8:
@@ -184,51 +228,22 @@ def classify(staves, notes):
     assert flag_OK
 
 
-def draw_result(img, notes):
-    # img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-
+def classify(staves, notes):
     for note in notes:
-        # Text label example "wiolin 2 (3)" means "g-clef is placed on second staff and third line of this staff"
-        text_label = "{} {} ({})".format(note.type, note.staff + 1, note.position)
+        # Assign staff to every note.
+        for staff in staves:
+            if staff.contains(note.y_center):
+                note.staff = staff
+                break
 
-        cv2.rectangle(img, (note.x, note.y), (note.x + note.width, note.y + note.height), (0, 255, 0), 2)
-        cv2.putText(img,
-                    text_label, (note.x, note.y),
-                    cv2.FONT_HERSHEY_COMPLEX,
-                    0.3, (0, 0, 255),
-                    thickness = 1,
-                    lineType = cv2.LINE_AA)
-
-    utils.save_and_show("result.jpg", img)
-
-
-def overlay(img, notes, rotation):
-    canvas = np.zeros((img.shape[0], img.shape[1], 4))
-
-    for note in notes:
-        # Text label example "wiolin 2 (3)" means "g-clef is placed on second staff and third line of this staff"
-        text_label = f"{note.type} {note.staff + 1} ({note.position})"
-
-        cv2.rectangle(canvas, (note.x, note.y), (note.x + note.width, note.y + note.height), (0, 255, 0, 255), 2)
-        cv2.putText(canvas,
-                    text_label, (note.x, note.y),
-                    cv2.FONT_HERSHEY_COMPLEX,
-                    0.3, (255, 0, 0, 255),
-                    thickness = 1,
-                    lineType = cv2.LINE_AA)
-
-    canvas = transform.rotate(canvas, rotation, cval = 0, reshape = False)
-
-    utils.save_and_show("overlay.png", canvas)
-    out = utils.combine(canvas, img)
-
-    utils.save_and_show("result.jpg", out)
+        if note.staff is not None:
+            note.classify()
 
 
 ######
 import transform
 
-img = utils.import_image(size = (800, 500))
+img = utils.import_image((800, 500))
 binary = filters.binarize(filters.desaturate(img), block_size = 51, offset = 10, filter = (9, 75, 75))
 
 angle = transform.detect_rotation_angle(binary)
@@ -241,11 +256,11 @@ erased = remove_lines(straight, horizontal_lines, vertical_lines)
 
 notes_rectangles = find_bounding_rectangles(erased, min_area = 150, max_area = 5000)
 staff_lines_rectangles = find_bounding_rectangles(np.invert(horizontal_lines), min_area = 500, max_area = 400000)
+staves = find_staff_bounds(horizontal_lines)
 
-staves = get_staves(staff_lines_rectangles, np.invert(horizontal_lines))
 notes = get_notes(notes_rectangles, erased)
 
 classify(staves, notes)
 # draw_result(final, notes)
-overlay(img, notes, -angle)
+utils.overlay(img, notes, -angle)
 ######
