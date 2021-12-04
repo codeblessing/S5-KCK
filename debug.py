@@ -1,5 +1,4 @@
 import cv2 as cv
-import utils
 
 
 def __draw_hough_lines__(img, lines, filename = "detected_staff_lines.png"):
@@ -14,12 +13,18 @@ def __draw_hough_lines__(img, lines, filename = "detected_staff_lines.png"):
         start = (int(x0 + 1000 * (-b)), int(y0 + 1000 * (a)))
         end = (int(x0 - 1000 * (-b)), int(y0 - 1000 * (a)))
         cv.line(img, start, end, (0, 0, 255), 1, cv.LINE_AA)
-    utils.save_and_show(filename, img)
+
 
 def __draw_staves__(img, staves):
     img = cv.cvtColor(img, cv.COLOR_GRAY2RGB)
     for staff in staves:
         print(staff)
-        img = cv.rectangle(img, (0, int(staff.y)), (1000, int(staff.y + staff.height)), (255, 255, 0), -1)
+        img = cv.rectangle(img, (0, int(staff.y)), (1000, int(staff.y + staff.height)), (0, 255, 255), -1)
+        img = cv.line(img, (0, int(staff.y)), (1000, int(staff.y)), (0, 0, 255), thickness = 2)
 
-    utils.save_and_show('staves.png', img)
+def __draw_rectangles__(img, rects):
+    img = cv.cvtColor(img, cv.COLOR_GRAY2RGB)
+    for x, y, w, h in rects:
+        img = cv.rectangle(img, (x, y, w, h), (0, 255, 255), -1)
+
+    return img
